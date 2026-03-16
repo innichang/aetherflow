@@ -36,16 +36,6 @@ AetherFlow aims to provide:
 4. Workers execute tasks and persist outputs
 5. Engine advances workflow state until completion
 
-## MVP Scope (Phase 1)
-
-The first version is intentionally focused:
-
-- Workflow definition API
-- DAG execution with step dependencies
-- PostgreSQL-backed queue
-- Worker runtime
-- Retry handling
-- Simple dashboard and execution visibility
 
 ## Example Workflow
 
@@ -54,6 +44,60 @@ Document processing pipeline:
 `upload -> extract -> chunk -> embed -> summarize -> store`
 
 Parallel branches are supported when dependencies allow it.
+
+## Usage Example
+
+Define a workflow with annotations:
+
+```java
+import io.github.inni.aetherflow.workflow.annotation.AIWorkflow;
+import io.github.inni.aetherflow.workflow.annotation.Step;
+import org.springframework.stereotype.Component;
+
+@Component
+@AIWorkflow("document-pipeline")
+public class DocumentWorkflow {
+
+    @Step
+    public void extractText() {}
+
+    @Step(dependsOn = {"extractText"})
+    public void chunkText() {}
+
+    @Step(dependsOn = {"chunkText"})
+    public void embedChunks() {}
+}
+```
+
+Start the workflow from application code:
+
+```java
+import io.github.inni.aetherflow.engine.WorkflowEngine;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+
+@Service
+public class WorkflowLauncher {
+
+    private final WorkflowEngine workflowEngine;
+
+    public WorkflowLauncher(WorkflowEngine workflowEngine) {
+        this.workflowEngine = workflowEngine;
+    }
+
+    public UUID runDocumentPipeline() {
+        return workflowEngine.start("document-pipeline");
+    }
+}
+```
+
+What happens next:
+
+1. AetherFlow scans `@AIWorkflow` + `@Step` definitions at startup.
+2. The engine validates the DAG and registers the workflow.
+3. `start(...)` creates a workflow run and enqueues root steps.
+4. Workers claim tasks using PostgreSQL row locking (`FOR UPDATE SKIP LOCKED`).
+5. Completed steps unlock dependent steps until the workflow is complete.
 
 ## Tech Stack
 
@@ -79,29 +123,6 @@ ai-workflow-engine
 ├─ dashboard
 └─ examples
 ```
-
-## Roadmap
-
-### Phase 1 (MVP)
-
-- Reliable DAG orchestration
-- Durable state and retries
-- Worker runtime
-- Basic operational dashboard
-
-### Phase 2
-
-- AI metrics (model, token, cost, latency)
-- Prompt version tracking
-- Streaming execution updates
-- Resource-aware scheduling
-
-### Phase 3
-
-- GPU-aware scheduling
-- Model routing
-- Auto-batching
-- Distributed workflow execution enhancements
 
 ## Design Direction
 

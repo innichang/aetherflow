@@ -1,0 +1,11 @@
+spring:
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+aetherflow:
+  worker:
+    poll-interval-ms: 60000
+
