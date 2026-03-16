@@ -6,6 +6,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "step_runs")
@@ -56,9 +58,11 @@ public class StepRunEntity extends AuditableEntity {
 	@Column(name = "duration_ms")
 	private Long durationMs;
 
+	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "input_payload", columnDefinition = "jsonb")
 	private String inputPayload;
 
+	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "output_payload", columnDefinition = "jsonb")
 	private String outputPayload;
 

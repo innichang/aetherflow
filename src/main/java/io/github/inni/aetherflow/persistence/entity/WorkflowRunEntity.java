@@ -6,6 +6,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "workflow_runs")
@@ -26,9 +28,11 @@ public class WorkflowRunEntity extends AuditableEntity {
 	@Column(name = "status", nullable = false)
 	private String status;
 
+	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "input_payload", columnDefinition = "jsonb")
 	private String inputPayload;
 
+	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "output_payload", columnDefinition = "jsonb")
 	private String outputPayload;
 

@@ -6,6 +6,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "task_queue")
@@ -44,6 +46,7 @@ public class TaskQueueEntity extends AuditableEntity {
 	@Column(name = "worker_id")
 	private String workerId;
 
+	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "queue_message", columnDefinition = "jsonb")
 	private String queueMessage;
 
