@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AetherFlow — Runs</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f8fafc; color: #1e293b; }
+    nav { background: #1e293b; color: #f8fafc; padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    nav a { color: #94a3b8; text-decoration: none; font-size: 14px; }
+    nav a:hover, nav a.active { color: #f8fafc; }
+    nav .brand { font-weight: 700; font-size: 16px; color: #f8fafc; margin-right: 16px; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+    .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: flex-end; }
+    .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+    .filters input, .filters select { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; background: #fff; }
+    .filters button { padding: 8px 18px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    .filters button:hover { background: #2563eb; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    th { background: #f1f5f9; text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    td { padding: 13px 16px; border-top: 1px solid #f1f5f9; font-size: 13px; }
+    tr:hover td { background: #f8fafc; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .badge-running   { background: #dbeafe; color: #1d4ed8; }
+    .badge-completed { background: #dcfce7; color: #15803d; }
+    .badge-failed    { background: #fee2e2; color: #dc2626; }
+    .badge-pending   { background: #e0e7ff; color: #4338ca; }
+    .badge-default   { background: #f1f5f9; color: #64748b; }
+    a.link { color: #3b82f6; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+    .pagination { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; align-items: center; font-size: 13px; }
+    .pagination button { padding: 5px 12px; border: 1px solid #e2e8f0; border-radius: 5px; background: #fff; cursor: pointer; }
+    .pagination button:disabled { opacity: .4; cursor: default; }
+    .pagination .info { color: #64748b; }
+    .empty { text-align: center; padding: 48px; color: #94a3b8; font-size: 14px; }
+    .loading { color: #94a3b8; font-size: 14px; padding: 24px 0; }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="brand">AetherFlow</span>
+  <a href="/dashboard">Workflows</a>
+  <a href="/dashboard/runs" class="active">Runs</a>
+  <a href="/actuator/prometheus" target="_blank">Metrics</a>
+</nav>
+<main>
+  <h1>Workflow Runs</h1>
+  <div class="filters">
+    <label>Workflow
+      <input id="f-workflow" type="text" placeholder="any" th:value="${filterWorkflow}"/>
+    </label>
+    <label>Status
+      <select id="f-status">
+        <option value="">any</option>
+        <option value="running"   th:selected="${filterStatus == 'running'}">running</option>
+        <option value="completed" th:selected="${filterStatus == 'completed'}">completed</option>
+        <option value="failed"    th:selected="${filterStatus == 'failed'}">failed</option>
+      </select>
+    </label>
+    <button onclick="loadPage(0)">Filter</button>
+  </div>
+  <div id="content" class="loading">Loading…</div>
+  <div class="pagination" id="pagination" style="display:none">
+    <button id="btn-prev" onclick="prevPage()">← Prev</button>
+    <span class="info" id="page-info"></span>
+    <button id="btn-next" onclick="nextPage()">Next →</button>
+  </div>
+</main>
+<script>
+  let currentPage = 0;
+  const PAGE_SIZE = 20;
+
+  function badge(status) {
+    const cls = ['running','completed','failed','pending'].includes(status) ? status : 'default';
+    return `<span class="badge badge-${cls}">${status}</span>`;
+  }
+
+  function fmt(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString();
+  }
+
+  async function loadPage(page) {
+    currentPage = page;
+    const workflow = document.getElementById('f-workflow').value.trim();
+    const status   = document.getElementById('f-status').value;
+    let url = `/workflow-runs?page=${page}&size=${PAGE_SIZE}`;
+    if (workflow) url += `&workflowName=${encodeURIComponent(workflow)}`;
+    if (status)   url += `&status=${encodeURIComponent(status)}`;
+
+    const el = document.getElementById('content');
+    el.innerHTML = '<span class="loading">Loading…</span>';
+
+    const res  = await fetch(url);
+    const data = await res.json();
+    const pg   = document.getElementById('pagination');
+
+    if (!data.content.length) {
+      el.innerHTML = '<div class="empty">No runs found.</div>';
+      pg.style.display = 'none';
+      return;
+    }
+
+    el.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Run ID</th>
+          <th>Workflow</th>
+          <th>Status</th>
+          <th>Started</th>
+          <th>Completed</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${data.content.map(r => `
+          <tr>
+            <td><code>${r.runId.substring(0, 8)}…</code></td>
+            <td>${r.workflowName}</td>
+            <td>${badge(r.status)}</td>
+            <td>${fmt(r.startedAt)}</td>
+            <td>${fmt(r.completedAt)}</td>
+            <td><a class="link" href="/dashboard/runs/${r.runId}">Detail →</a></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+
+    const totalPages = Math.ceil(data.totalElements / PAGE_SIZE);
+    document.getElementById('page-info').textContent = `Page ${data.page + 1} of ${totalPages} (${data.totalElements} runs)`;
+    document.getElementById('btn-prev').disabled = data.page === 0;
+    document.getElementById('btn-next').disabled = data.page + 1 >= totalPages;
+    pg.style.display = 'flex';
+  }
+
+  function prevPage() { if (currentPage > 0) loadPage(currentPage - 1); }
+  function nextPage() { loadPage(currentPage + 1); }
+
+  loadPage(0);
+</script>
+</body>
+</html>

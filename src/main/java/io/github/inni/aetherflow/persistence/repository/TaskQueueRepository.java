@@ -8,5 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TaskQueueRepository extends JpaRepository<TaskQueueEntity, UUID> {
 
 	List<TaskQueueEntity> findByWorkflowRunId(UUID workflowRunId);
+
+	long countByStatus(String status);
 }
 

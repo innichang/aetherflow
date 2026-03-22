@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AetherFlow — Run Detail</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f8fafc; color: #1e293b; }
+    nav { background: #1e293b; color: #f8fafc; padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    nav a { color: #94a3b8; text-decoration: none; font-size: 14px; }
+    nav a:hover { color: #f8fafc; }
+    nav .brand { font-weight: 700; font-size: 16px; color: #f8fafc; margin-right: 16px; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+    .header-row { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; gap: 16px; }
+    .run-title { font-size: 20px; font-weight: 700; }
+    .run-meta { font-size: 13px; color: #64748b; margin-top: 4px; }
+    .run-meta span { margin-right: 20px; }
+    .badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .badge-running   { background: #dbeafe; color: #1d4ed8; }
+    .badge-completed { background: #dcfce7; color: #15803d; }
+    .badge-failed    { background: #fee2e2; color: #dc2626; }
+    .badge-pending   { background: #e0e7ff; color: #4338ca; }
+    .badge-default   { background: #f1f5f9; color: #64748b; }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }
+    .card-header { padding: 14px 20px; border-bottom: 1px solid #f1f5f9; font-weight: 600; font-size: 14px; }
+    .card-body { padding: 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #64748b; background: #f8fafc; }
+    td { padding: 11px 14px; border-top: 1px solid #f1f5f9; font-size: 13px; }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+    .dot-not_started { background: #cbd5e1; }
+    .dot-pending     { background: #818cf8; }
+    .dot-running     { background: #3b82f6; animation: pulse 1.2s ease-in-out infinite; }
+    .dot-completed   { background: #22c55e; }
+    .dot-failed      { background: #ef4444; }
+    .dot-retrying    { background: #f59e0b; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .error-msg { font-size: 12px; color: #dc2626; margin-top: 3px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dag-container { overflow-x: auto; }
+    #dag-container svg text { font-family: system-ui, sans-serif; }
+    .polling-badge { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 1s ease-in-out infinite; margin-right: 6px; }
+    .back-link { font-size: 13px; color: #3b82f6; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+    .loading { color: #94a3b8; font-size: 14px; }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="brand">AetherFlow</span>
+  <a href="/dashboard">Workflows</a>
+  <a href="/dashboard/runs">Runs</a>
+  <a href="/actuator/prometheus" target="_blank">Metrics</a>
+</nav>
+<main>
+  <div style="margin-bottom:16px">
+    <a class="back-link" href="/dashboard/runs">← All runs</a>
+  </div>
+
+  <div class="header-row">
+    <div>
+      <div class="run-title" id="run-title">Loading…</div>
+      <div class="run-meta" id="run-meta"></div>
+    </div>
+    <div id="run-badge"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" id="dag-header">
+      DAG
+      <span id="polling-indicator" style="display:none; font-size:12px; font-weight:400; color:#64748b; margin-left:8px;">
+        <span class="polling-badge"></span>live
+      </span>
+    </div>
+    <div class="card-body" id="dag-container"><span class="loading">Loading…</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Steps</div>
+    <div class="card-body" style="padding:0">
+      <table>
+        <thead><tr>
+          <th>Step</th>
+          <th>Status</th>
+          <th>Attempt</th>
+          <th>Duration</th>
+          <th>Error</th>
+        </tr></thead>
+        <tbody id="steps-body"><tr><td colspan="5" style="padding:20px; color:#94a3b8">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script th:inline="javascript">
+  const RUN_ID = /*[[${runId}]]*/ '';
+  let pollTimer = null;
+
+  const STATUS_COLORS = {
+    not_started: { bg: '#f1f5f9', border: '#cbd5e1', text: '#64748b' },
+    pending:     { bg: '#e0e7ff', border: '#818cf8', text: '#4338ca' },
+    running:     { bg: '#dbeafe', border: '#3b82f6', text: '#1d4ed8' },
+    completed:   { bg: '#dcfce7', border: '#22c55e', text: '#15803d' },
+    failed:      { bg: '#fee2e2', border: '#ef4444', text: '#dc2626' },
+    retrying:    { bg: '#fed7aa', border: '#f59e0b', text: '#c2410c' },
+  };
+
+  function statusColor(s) {
+    return STATUS_COLORS[s] || STATUS_COLORS['not_started'];
+  }
+
+  function badge(status) {
+    const cls = ['running','completed','failed','pending'].includes(status) ? status : 'default';
+    return `<span class="badge badge-${cls}">${status}</span>`;
+  }
+
+  function fmt(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString();
+  }
+
+  function computeLevels(steps) {
+    const levels = {};
+    for (const step of steps) {
+      if (!step.dependsOn || step.dependsOn.length === 0) {
+        levels[step.name] = 0;
+      } else {
+        levels[step.name] = Math.max(...step.dependsOn.map(d => levels[d] ?? 0)) + 1;
+      }
+    }
+    return levels;
+  }
+
+  function renderDag(steps) {
+    if (!steps || steps.length === 0) return '<p style="color:#94a3b8; font-size:13px">No steps.</p>';
+
+    const NODE_W = 190, NODE_H = 54, COL_GAP = 60, ROW_GAP = 24;
+
+    const levels = computeLevels(steps);
+    const levelGroups = {};
+    for (const step of steps) {
+      const lvl = levels[step.name];
+      (levelGroups[lvl] = levelGroups[lvl] || []).push(step);
+    }
+
+    const maxLevel = Math.max(...Object.keys(levelGroups).map(Number));
+    const maxRows  = Math.max(...Object.values(levelGroups).map(g => g.length));
+
+    const svgW = (maxLevel + 1) * (NODE_W + COL_GAP) - COL_GAP + 20;
+    const svgH = maxRows * (NODE_H + ROW_GAP) - ROW_GAP + 20;
+
+    // Compute positions (centre each column vertically)
+    const pos = {};
+    for (const [lvlStr, nodes] of Object.entries(levelGroups)) {
+      const lvl = parseInt(lvlStr);
+      const colH = nodes.length * (NODE_H + ROW_GAP) - ROW_GAP;
+      const startY = (svgH - colH) / 2;
+      nodes.forEach((step, i) => {
+        pos[step.name] = {
+          x: lvl * (NODE_W + COL_GAP) + 10,
+          y: startY + i * (NODE_H + ROW_GAP)
+        };
+      });
+    }
+
+    const stepMap = Object.fromEntries(steps.map(s => [s.name, s]));
+
+    // Build SVG
+    let edges = '';
+    let nodes = '';
+
+    for (const step of steps) {
+      for (const dep of (step.dependsOn || [])) {
+        if (!pos[dep] || !pos[step.name]) continue;
+        const fx = pos[dep].x + NODE_W, fy = pos[dep].y + NODE_H / 2;
+        const tx = pos[step.name].x,    ty = pos[step.name].y + NODE_H / 2;
+        const cx = (fx + tx) / 2;
+        edges += `<path d="M${fx},${fy} C${cx},${fy} ${cx},${ty} ${tx},${ty}"
+          fill="none" stroke="#cbd5e1" stroke-width="2"
+          marker-end="url(#arrow)"/>`;
+      }
+    }
+
+    for (const step of steps) {
+      const p = pos[step.name];
+      if (!p) continue;
+      const c = statusColor(step.status);
+      const label = step.name.length > 20 ? step.name.substring(0, 18) + '…' : step.name;
+      const sub = step.durationMs != null
+        ? `${step.status} · ${step.durationMs}ms`
+        : step.status;
+      nodes += `
+        <g transform="translate(${p.x},${p.y})">
+          <rect width="${NODE_W}" height="${NODE_H}" rx="7"
+            fill="${c.bg}" stroke="${c.border}" stroke-width="2"/>
+          <text x="${NODE_W/2}" y="22" text-anchor="middle"
+            font-size="13" font-weight="600" fill="${c.text}">${label}</text>
+          <text x="${NODE_W/2}" y="40" text-anchor="middle"
+            font-size="11" fill="${c.text}" opacity="0.85">${sub}</text>
+        </g>`;
+    }
+
+    return `<svg width="${svgW}" height="${svgH}" style="display:block">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+      ${edges}
+      ${nodes}
+    </svg>`;
+  }
+
+  function renderSteps(steps) {
+    if (!steps || steps.length === 0) return '<tr><td colspan="5" style="padding:20px;color:#94a3b8">No steps yet.</td></tr>';
+    return steps.map(s => `
+      <tr>
+        <td>
+          <span class="status-dot dot-${s.status}"></span>
+          <strong>${s.name}</strong>
+          ${s.dependsOn && s.dependsOn.length ? `<br><span style="font-size:11px;color:#94a3b8">needs: ${s.dependsOn.join(', ')}</span>` : ''}
+        </td>
+        <td>${s.status}</td>
+        <td>${s.attempt != null ? s.attempt : '—'}</td>
+        <td>${s.durationMs != null ? s.durationMs + ' ms' : '—'}</td>
+        <td>
+          ${s.errorMessage ? `<span class="error-msg" title="${s.errorMessage}">${s.errorMessage}</span>` : '—'}
+        </td>
+      </tr>`).join('');
+  }
+
+  async function load() {
+    const res  = await fetch(`/workflow-runs/${RUN_ID}/graph`);
+    if (!res.ok) {
+      document.getElementById('run-title').textContent = 'Run not found';
+      return;
+    }
+    const data = await res.json();
+
+    document.getElementById('run-title').textContent = data.workflowName;
+    document.getElementById('run-badge').innerHTML = badge(data.status);
+
+    const detailRes  = await fetch(`/workflow-runs/${RUN_ID}`);
+    const detail     = detailRes.ok ? await detailRes.json() : null;
+    if (detail) {
+      document.getElementById('run-meta').innerHTML =
+        `<span>Run: <code>${RUN_ID.substring(0,8)}…</code></span>` +
+        `<span>Started: ${fmt(detail.startedAt)}</span>` +
+        (detail.completedAt ? `<span>Completed: ${fmt(detail.completedAt)}</span>` : '') +
+        (detail.errorMessage ? `<span style="color:#dc2626">Error: ${detail.errorMessage}</span>` : '');
+    }
+
+    document.getElementById('dag-container').innerHTML = renderDag(data.steps);
+    document.getElementById('steps-body').innerHTML    = renderSteps(data.steps);
+
+    const polling = document.getElementById('polling-indicator');
+    if (data.status === 'running') {
+      polling.style.display = 'inline';
+      pollTimer = setTimeout(load, 2000);
+    } else {
+      polling.style.display = 'none';
+      clearTimeout(pollTimer);
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>

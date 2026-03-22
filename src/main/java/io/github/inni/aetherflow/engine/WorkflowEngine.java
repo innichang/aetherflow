@@ -12,15 +12,20 @@ import io.github.inni.aetherflow.persistence.repository.WorkflowRunRepository;
 import io.github.inni.aetherflow.persistence.service.WorkflowMetadataSyncService;
 import io.github.inni.aetherflow.workflow.registry.RegisteredWorkflow;
 import io.github.inni.aetherflow.workflow.registry.WorkflowRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class WorkflowEngine {
+
+	private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
 
 	private final WorkflowRegistry workflowRegistry;
 	private final WorkflowMetadataSyncService metadataSyncService;
@@ -28,6 +33,7 @@ public class WorkflowEngine {
 	private final StepRepository stepRepository;
 	private final StepRunRepository stepRunRepository;
 	private final TaskQueueRepository taskQueueRepository;
+	private final MeterRegistry meterRegistry;
 
 	public WorkflowEngine(
 		WorkflowRegistry workflowRegistry,
@@ -35,7 +41,8 @@ public class WorkflowEngine {
 		WorkflowRunRepository workflowRunRepository,
 		StepRepository stepRepository,
 		StepRunRepository stepRunRepository,
-		TaskQueueRepository taskQueueRepository
+		TaskQueueRepository taskQueueRepository,
+		MeterRegistry meterRegistry
 	) {
 		this.workflowRegistry = workflowRegistry;
 		this.metadataSyncService = metadataSyncService;
@@ -43,6 +50,7 @@ public class WorkflowEngine {
 		this.stepRepository = stepRepository;
 		this.stepRunRepository = stepRunRepository;
 		this.taskQueueRepository = taskQueueRepository;
+		this.meterRegistry = meterRegistry;
 	}
 
 	@Transactional
@@ -74,6 +82,11 @@ public class WorkflowEngine {
 		workflowRun.setTriggerKey(triggerKey);
 		workflowRun.setStartedAt(OffsetDateTime.now());
 		workflowRunRepository.save(workflowRun);
+
+		log.info("event=workflow.started workflow_run_id={} workflow_name={} root_steps={} trigger_key={}",
+			workflowRun.getId(), workflowName,
+			registeredWorkflow.dependencyGraph().rootSteps(), triggerKey);
+		meterRegistry.counter("aetherflow.workflows.started", "workflow_name", workflowName).increment();
 
 		for (String rootStep : registeredWorkflow.dependencyGraph().rootSteps()) {
 			StepEntity stepEntity = stepEntityMap.get(rootStep);

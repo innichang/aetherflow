@@ -2,6 +2,9 @@ package io.github.inni.aetherflow.execution;
 
 import io.github.inni.aetherflow.engine.ExecutionStatus;
 import io.github.inni.aetherflow.persistence.entity.StepEntity;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.util.concurrent.TimeUnit;
 import org.springframework.dao.DataIntegrityViolationException;
 import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.TaskQueueEntity;
@@ -19,11 +22,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ResultReporter {
+
+	private static final Logger log = LoggerFactory.getLogger(ResultReporter.class);
 
 	private final StepRunRepository stepRunRepository;
 	private final TaskQueueRepository taskQueueRepository;
@@ -32,6 +39,7 @@ public class ResultReporter {
 	private final WorkflowRepository workflowRepository;
 	private final WorkflowRegistry workflowRegistry;
 	private final WorkflowMetadataSyncService metadataSyncService;
+	private final MeterRegistry meterRegistry;
 
 	public ResultReporter(
 		StepRunRepository stepRunRepository,
@@ -40,7 +48,8 @@ public class ResultReporter {
 		StepRepository stepRepository,
 		WorkflowRepository workflowRepository,
 		WorkflowRegistry workflowRegistry,
-		WorkflowMetadataSyncService metadataSyncService
+		WorkflowMetadataSyncService metadataSyncService,
+		MeterRegistry meterRegistry
 	) {
 		this.stepRunRepository = stepRunRepository;
 		this.taskQueueRepository = taskQueueRepository;
@@ -49,6 +58,7 @@ public class ResultReporter {
 		this.workflowRepository = workflowRepository;
 		this.workflowRegistry = workflowRegistry;
 		this.metadataSyncService = metadataSyncService;
+		this.meterRegistry = meterRegistry;
 	}
 
 	@Transactional
@@ -76,11 +86,23 @@ public class ResultReporter {
 		workflowRun.setErrorMessage(result.error().getMessage());
 		workflowRun.setCompletedAt(OffsetDateTime.now());
 		workflowRunRepository.save(workflowRun);
+		log.error("event=workflow.failed workflow_run_id={} workflow_name={} failed_step={} error_type={} error_message={}",
+			workflowRun.getId(), workflowRun.getWorkflowName(), task.getStepName(),
+			result.error().getClass().getSimpleName(), result.error().getMessage());
+		meterRegistry.counter("aetherflow.workflows.completed",
+			"workflow_name", workflowRun.getWorkflowName(), "status", "failed").increment();
 	}
 
 	private void scheduleRetry(StepRunEntity stepRun, TaskQueueEntity task, ExecutionResult result, String workflowName) {
 		int retryCount = stepRun.getRetryCount();
 		int backoffSeconds = resolveBackoffSeconds(stepRun, workflowName);
+		log.warn("event=step.retrying workflow_run_id={} step_run_id={} workflow_name={} step_name={} attempt={} retries_remaining={} backoff_ms={} error_type={} error_message={}",
+			stepRun.getWorkflowRunId(), stepRun.getId(), workflowName, stepRun.getStepName(),
+			stepRun.getAttempt(), stepRun.getMaxRetries() - retryCount - 1,
+			(long) backoffSeconds * (1L << retryCount) * 1000,
+			result.error().getClass().getSimpleName(), result.error().getMessage());
+		meterRegistry.counter("aetherflow.tasks.retried",
+			"workflow_name", workflowName, "step_name", stepRun.getStepName()).increment();
 		// exponential backoff: delay = backoffSeconds * 2^retryCount (minimum 0)
 		long delaySeconds = (long) backoffSeconds * (1L << retryCount);
 		OffsetDateTime nextRetryTime = OffsetDateTime.now().plusSeconds(delaySeconds);
@@ -145,6 +167,21 @@ public class ResultReporter {
 		task.setStatus(ExecutionStatus.COMPLETED);
 		task.setLockedAt(now);
 		taskQueueRepository.save(task);
+
+		log.info("event=step.completed workflow_run_id={} step_run_id={} workflow_name={} step_name={} attempt={} duration_ms={}",
+			stepRun.getWorkflowRunId(), stepRun.getId(),
+			task.getWorkflowName(), stepRun.getStepName(),
+			stepRun.getAttempt(), durationMs);
+
+		String workflowName = task.getWorkflowName();
+		String stepName = stepRun.getStepName();
+		meterRegistry.counter("aetherflow.tasks.completed",
+			"workflow_name", workflowName, "step_name", stepName, "status", "completed").increment();
+		Timer.builder("aetherflow.step.duration")
+			.tag("workflow_name", workflowName).tag("step_name", stepName).tag("status", "completed")
+			.publishPercentiles(0.5, 0.95, 0.99)
+			.register(meterRegistry)
+			.record(durationMs, TimeUnit.MILLISECONDS);
 	}
 
 	private void markStepAndTaskFailed(StepRunEntity stepRun, TaskQueueEntity task, ExecutionResult result) {
@@ -159,6 +196,22 @@ public class ResultReporter {
 		task.setStatus(ExecutionStatus.FAILED);
 		task.setLockedAt(now);
 		taskQueueRepository.save(task);
+
+		log.error("event=step.failed workflow_run_id={} step_run_id={} workflow_name={} step_name={} attempt={} duration_ms={} error_type={} error_message={}",
+			stepRun.getWorkflowRunId(), stepRun.getId(),
+			task.getWorkflowName(), stepRun.getStepName(),
+			stepRun.getAttempt(), result.durationMs(),
+			result.error().getClass().getSimpleName(), result.error().getMessage());
+
+		String workflowName = task.getWorkflowName();
+		String stepName = stepRun.getStepName();
+		meterRegistry.counter("aetherflow.tasks.completed",
+			"workflow_name", workflowName, "step_name", stepName, "status", "failed").increment();
+		Timer.builder("aetherflow.step.duration")
+			.tag("workflow_name", workflowName).tag("step_name", stepName).tag("status", "failed")
+			.publishPercentiles(0.5, 0.95, 0.99)
+			.register(meterRegistry)
+			.record(result.durationMs(), TimeUnit.MILLISECONDS);
 	}
 
 	private void enqueueReadyDependents(WorkflowRunEntity workflowRun, String completedStepName) {
@@ -241,5 +294,9 @@ public class ResultReporter {
 		workflowRun.setStatus(ExecutionStatus.COMPLETED);
 		workflowRun.setCompletedAt(OffsetDateTime.now());
 		workflowRunRepository.save(workflowRun);
+		log.info("event=workflow.completed workflow_run_id={} workflow_name={}",
+			workflowRun.getId(), workflowRun.getWorkflowName());
+		meterRegistry.counter("aetherflow.workflows.completed",
+			"workflow_name", workflowRun.getWorkflowName(), "status", "completed").increment();
 	}
 }
