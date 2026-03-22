@@ -6,12 +6,18 @@ import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.WorkflowRunEntity;
 import io.github.inni.aetherflow.persistence.repository.StepRunRepository;
 import io.github.inni.aetherflow.persistence.repository.WorkflowRunRepository;
+import io.github.inni.aetherflow.workflow.model.StepDefinition;
+import io.github.inni.aetherflow.workflow.registry.RegisteredWorkflow;
+import io.github.inni.aetherflow.workflow.registry.WorkflowRegistry;
 import jakarta.persistence.criteria.Predicate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,15 +32,18 @@ public class WorkflowRunQueryService {
 	private final WorkflowEngine workflowEngine;
 	private final WorkflowRunRepository workflowRunRepository;
 	private final StepRunRepository stepRunRepository;
+	private final WorkflowRegistry workflowRegistry;
 
 	public WorkflowRunQueryService(
 		WorkflowEngine workflowEngine,
 		WorkflowRunRepository workflowRunRepository,
-		StepRunRepository stepRunRepository
+		StepRunRepository stepRunRepository,
+		WorkflowRegistry workflowRegistry
 	) {
 		this.workflowEngine = workflowEngine;
 		this.workflowRunRepository = workflowRunRepository;
 		this.stepRunRepository = stepRunRepository;
+		this.workflowRegistry = workflowRegistry;
 	}
 
 	public StartWorkflowResponse startWorkflow(StartWorkflowRequest request) {
@@ -82,6 +91,43 @@ public class WorkflowRunQueryService {
 		);
 	}
 
+	public WorkflowRunGraph getRunGraph(UUID runId) {
+		WorkflowRunEntity run = workflowRunRepository.findById(runId)
+			.orElseThrow(() -> new NoSuchElementException("Workflow run '%s' not found".formatted(runId)));
+
+		// Group step runs by step name; keep the latest attempt per step
+		Map<String, StepRunEntity> latestByStep = stepRunRepository.findByWorkflowRunId(runId).stream()
+			.collect(Collectors.toMap(
+				StepRunEntity::getStepName,
+				s -> s,
+				(a, b) -> a.getAttempt() >= b.getAttempt() ? a : b
+			));
+
+		RegisteredWorkflow workflow = workflowRegistry.getRequired(run.getWorkflowName());
+
+		List<StepGraphNode> nodes = workflow.dependencyGraph().topologicalOrder().stream()
+			.map(stepName -> {
+				StepDefinition def = workflow.definition().steps().stream()
+					.filter(s -> s.stepName().equals(stepName))
+					.findFirst()
+					.orElseThrow();
+				StepRunEntity stepRun = latestByStep.get(stepName);
+				return new StepGraphNode(
+					stepName,
+					def.dependsOn(),
+					def.retries(),
+					def.timeoutSeconds(),
+					stepRun != null ? stepRun.getStatus() : "not_started",
+					stepRun != null ? stepRun.getAttempt() : null,
+					stepRun != null ? stepRun.getDurationMs() : null,
+					stepRun != null ? stepRun.getErrorMessage() : null
+				);
+			})
+			.toList();
+
+		return new WorkflowRunGraph(run.getId(), run.getWorkflowName(), run.getStatus(), nodes);
+	}
+
 	// --- request/response records ---
 
 	public record StartWorkflowRequest(String workflowName, JsonNode input) {}
@@ -116,6 +162,24 @@ public class WorkflowRunQueryService {
 		int retryCount,
 		OffsetDateTime startedAt,
 		OffsetDateTime completedAt,
+		Long durationMs,
+		String errorMessage
+	) {}
+
+	public record WorkflowRunGraph(
+		UUID runId,
+		String workflowName,
+		String status,
+		List<StepGraphNode> steps
+	) {}
+
+	public record StepGraphNode(
+		String name,
+		List<String> dependsOn,
+		int retries,
+		Integer timeoutSeconds,
+		String status,
+		Integer attempt,
 		Long durationMs,
 		String errorMessage
 	) {}

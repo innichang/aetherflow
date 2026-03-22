@@ -15,12 +15,17 @@ import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class TaskPoller {
+
+	private static final Logger log = LoggerFactory.getLogger(TaskPoller.class);
 
 	private final TaskQueueClaimService taskQueueClaimService;
 	private final TaskExecutor taskExecutor;
@@ -105,7 +110,21 @@ public class TaskPoller {
 		stepRun.setStartedAt(OffsetDateTime.now());
 		stepRunRepository.save(stepRun);
 
-		ExecutionResult result = taskExecutor.execute(task);
-		resultReporter.report(task, result);
+		MDC.put("workflow_run_id", task.getWorkflowRunId().toString());
+		MDC.put("step_run_id", task.getStepRunId().toString());
+		MDC.put("workflow_name", task.getWorkflowName());
+		MDC.put("step_name", task.getStepName());
+		MDC.put("worker_id", workerId);
+		MDC.put("attempt", String.valueOf(stepRun.getAttempt()));
+		try {
+			log.info("event=step.started workflow_run_id={} step_run_id={} workflow_name={} step_name={} worker_id={} attempt={}",
+				task.getWorkflowRunId(), task.getStepRunId(),
+				task.getWorkflowName(), task.getStepName(),
+				workerId, stepRun.getAttempt());
+			ExecutionResult result = taskExecutor.execute(task);
+			resultReporter.report(task, result);
+		} finally {
+			MDC.clear();
+		}
 	}
 }

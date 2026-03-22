@@ -3,6 +3,7 @@ package io.github.inni.aetherflow.api;
 import io.github.inni.aetherflow.api.WorkflowRunQueryService.StartWorkflowRequest;
 import io.github.inni.aetherflow.api.WorkflowRunQueryService.StartWorkflowResponse;
 import io.github.inni.aetherflow.api.WorkflowRunQueryService.WorkflowRunDetail;
+import io.github.inni.aetherflow.api.WorkflowRunQueryService.WorkflowRunGraph;
 import io.github.inni.aetherflow.api.WorkflowRunQueryService.WorkflowRunPage;
 import java.time.OffsetDateTime;
 import java.util.NoSuchElementException;
@@ -54,6 +55,16 @@ public class WorkflowRunController {
 		try {
 			WorkflowRunDetail detail = queryService.getRun(id);
 			return ResponseEntity.ok(detail);
+		} catch (NoSuchElementException e) {
+			return ResponseEntity.notFound().build();
+		}
+	}
+
+	@GetMapping("/workflow-runs/{id}/graph")
+	public ResponseEntity<?> getRunGraph(@PathVariable UUID id) {
+		try {
+			WorkflowRunGraph graph = queryService.getRunGraph(id);
+			return ResponseEntity.ok(graph);
 		} catch (NoSuchElementException e) {
 			return ResponseEntity.notFound().build();
 		}
