@@ -1,9 +1,13 @@
 package io.github.inni.aetherflow.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.inni.aetherflow.engine.WorkflowEngine;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
@@ -32,4 +36,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @EnableConfigurationProperties(AetherflowProperties.class)
 public class AetherflowAutoConfiguration {
+
+	@Bean
+	@ConditionalOnMissingBean
+	public ObjectMapper objectMapper() {
+		return JsonMapper.builder().findAndAddModules().build();
+	}
 }
