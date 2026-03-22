@@ -86,6 +86,7 @@ public class WorkflowEngine {
 			stepRun.setAttempt(1);
 			stepRun.setMaxRetries(stepEntity.getRetries());
 			stepRun.setRetryCount(0);
+			stepRun.setIdempotencyKey(workflowRun.getId() + ":" + stepEntity.getStepName() + ":1");
 			stepRunRepository.save(stepRun);
 
 			TaskQueueEntity task = new TaskQueueEntity();

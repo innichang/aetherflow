@@ -2,7 +2,15 @@ package io.github.inni.aetherflow.execution;
 
 import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.TaskQueueEntity;
+import io.github.inni.aetherflow.persistence.entity.WorkerEntity;
+import io.github.inni.aetherflow.persistence.entity.WorkerHeartbeatEntity;
 import io.github.inni.aetherflow.persistence.repository.StepRunRepository;
+import io.github.inni.aetherflow.persistence.repository.WorkerHeartbeatRepository;
+import io.github.inni.aetherflow.persistence.repository.WorkerRepository;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,19 +26,43 @@ public class TaskPoller {
 	private final TaskExecutor taskExecutor;
 	private final ResultReporter resultReporter;
 	private final StepRunRepository stepRunRepository;
+	private final WorkerRepository workerRepository;
+	private final WorkerHeartbeatRepository workerHeartbeatRepository;
 	private final String workerId;
 
 	public TaskPoller(
 		TaskQueueClaimService taskQueueClaimService,
 		TaskExecutor taskExecutor,
 		ResultReporter resultReporter,
-		StepRunRepository stepRunRepository
+		StepRunRepository stepRunRepository,
+		WorkerRepository workerRepository,
+		WorkerHeartbeatRepository workerHeartbeatRepository
 	) {
 		this.taskQueueClaimService = taskQueueClaimService;
 		this.taskExecutor = taskExecutor;
 		this.resultReporter = resultReporter;
 		this.stepRunRepository = stepRunRepository;
+		this.workerRepository = workerRepository;
+		this.workerHeartbeatRepository = workerHeartbeatRepository;
 		this.workerId = "worker-" + UUID.randomUUID();
+	}
+
+	@PostConstruct
+	public void registerWorker() {
+		String hostname;
+		try {
+			hostname = InetAddress.getLocalHost().getHostName();
+		} catch (UnknownHostException e) {
+			hostname = "unknown";
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		WorkerEntity worker = new WorkerEntity();
+		worker.setId(workerId);
+		worker.setHostname(hostname);
+		worker.setStartedAt(now);
+		worker.setLastHeartbeat(now);
+		worker.setStatus("active");
+		workerRepository.save(worker);
 	}
 
 	@Scheduled(fixedDelayString = "${aetherflow.worker.poll-interval-ms:250}")
@@ -40,9 +72,32 @@ public class TaskPoller {
 		task.ifPresent(this::executeTask);
 	}
 
+	@Scheduled(fixedDelayString = "${aetherflow.worker.heartbeat-interval-ms:5000}")
+	public void heartbeat() {
+		OffsetDateTime now = OffsetDateTime.now();
+		workerRepository.findById(workerId).ifPresent(worker -> {
+			worker.setLastHeartbeat(now);
+			workerRepository.save(worker);
+		});
+		WorkerHeartbeatEntity heartbeat = new WorkerHeartbeatEntity();
+		heartbeat.setId(UUID.randomUUID());
+		heartbeat.setWorkerId(workerId);
+		heartbeat.setRecordedAt(now);
+		workerHeartbeatRepository.save(heartbeat);
+	}
+
+	@PreDestroy
+	public void deregisterWorker() {
+		workerRepository.findById(workerId).ifPresent(worker -> {
+			worker.setStatus("inactive");
+			workerRepository.save(worker);
+		});
+	}
+
 	@Transactional
 	void executeTask(TaskQueueEntity task) {
 		StepRunEntity stepRun = stepRunRepository.findById(task.getStepRunId()).orElseThrow();
+		stepRun.setIdempotencyKey(stepRun.getWorkflowRunId() + ":" + stepRun.getStepName() + ":" + stepRun.getAttempt());
 		stepRun.setStatus("running");
 		stepRun.setWorkerId(workerId);
 		stepRun.setStartedAt(OffsetDateTime.now());
@@ -52,4 +107,3 @@ public class TaskPoller {
 		resultReporter.report(task, result);
 	}
 }
-

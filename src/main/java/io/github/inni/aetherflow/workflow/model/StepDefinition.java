@@ -7,6 +7,7 @@ public record StepDefinition(
 	String methodName,
 	List<String> dependsOn,
 	int retries,
+	int backoffSeconds,
 	Integer timeoutSeconds,
 	Integer concurrencyLimit
 ) {

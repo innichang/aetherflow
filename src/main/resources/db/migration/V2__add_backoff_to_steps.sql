@@ -1,0 +1,1 @@
+ALTER TABLE steps ADD COLUMN backoff_seconds INTEGER NOT NULL DEFAULT 0;

@@ -27,12 +27,27 @@ public class TaskQueueClaimService {
 		var params = Map.<String, Object>of("status", ExecutionStatus.PENDING);
 		var taskIds = jdbcTemplate.query(
 			"""
-				SELECT id
-				FROM task_queue
-				WHERE status = :status
-				  AND available_at <= NOW()
-				ORDER BY priority ASC, available_at ASC
-				FOR UPDATE SKIP LOCKED
+				WITH running_counts AS (
+				    SELECT step_name, workflow_name, COUNT(*) AS cnt
+				    FROM task_queue
+				    WHERE status = 'running'
+				    GROUP BY step_name, workflow_name
+				)
+				SELECT tq.id
+				FROM task_queue tq
+				JOIN steps s
+				    ON s.step_name = tq.step_name
+				   AND s.workflow_id = (SELECT id FROM workflows WHERE workflow_name = tq.workflow_name)
+				LEFT JOIN running_counts rc
+				    ON rc.step_name = tq.step_name
+				   AND rc.workflow_name = tq.workflow_name
+				WHERE tq.status = :status
+				  AND tq.available_at <= NOW()
+				  AND (s.concurrency_limit IS NULL
+				       OR s.concurrency_limit = 0
+				       OR COALESCE(rc.cnt, 0) < s.concurrency_limit)
+				ORDER BY tq.priority ASC, tq.available_at ASC
+				FOR UPDATE OF tq SKIP LOCKED
 				LIMIT 1
 				""",
 			params,

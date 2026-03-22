@@ -13,5 +13,7 @@ public interface StepRunRepository extends JpaRepository<StepRunEntity, UUID> {
 	List<StepRunEntity> findByWorkflowRunIdAndStatus(UUID workflowRunId, String status);
 
 	Optional<StepRunEntity> findByWorkflowRunIdAndStepNameAndAttempt(UUID workflowRunId, String stepName, int attempt);
+
+	List<StepRunEntity> findByWorkflowRunIdAndStepName(UUID workflowRunId, String stepName);
 }
 

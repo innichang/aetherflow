@@ -22,9 +22,9 @@ class DependencyGraphBuilderTest {
 			"documentWorkflow",
 			"DocumentWorkflow",
 			List.of(
-				new StepDefinition("extractText", "extractText", List.of(), 0, null, null),
-				new StepDefinition("chunkText", "chunkText", List.of("extractText"), 0, null, null),
-				new StepDefinition("embedChunks", "embedChunks", List.of("chunkText"), 0, null, null)
+				new StepDefinition("extractText", "extractText", List.of(), 0, 0, null, null),
+				new StepDefinition("chunkText", "chunkText", List.of("extractText"), 0, 0, null, null),
+				new StepDefinition("embedChunks", "embedChunks", List.of("chunkText"), 0, 0, null, null)
 			)
 		);
 
@@ -40,7 +40,7 @@ class DependencyGraphBuilderTest {
 			"invalid-workflow",
 			"invalidWorkflow",
 			"InvalidWorkflow",
-			List.of(new StepDefinition("chunkText", "chunkText", List.of("extractText"), 0, null, null))
+			List.of(new StepDefinition("chunkText", "chunkText", List.of("extractText"), 0, 0, null, null))
 		);
 
 		assertThrows(WorkflowValidationException.class, () -> dependencyGraphBuilder.build(workflow));
@@ -53,8 +53,8 @@ class DependencyGraphBuilderTest {
 			"cycleWorkflow",
 			"CycleWorkflow",
 			List.of(
-				new StepDefinition("stepA", "stepA", List.of("stepB"), 0, null, null),
-				new StepDefinition("stepB", "stepB", List.of("stepA"), 0, null, null)
+				new StepDefinition("stepA", "stepA", List.of("stepB"), 0, 0, null, null),
+				new StepDefinition("stepB", "stepB", List.of("stepA"), 0, 0, null, null)
 			)
 		);
 
@@ -68,8 +68,8 @@ class DependencyGraphBuilderTest {
 			"dupWorkflow",
 			"DupWorkflow",
 			List.of(
-				new StepDefinition("extractText", "extractText", List.of(), 0, null, null),
-				new StepDefinition("extractText", "extractTextAgain", List.of(), 0, null, null)
+				new StepDefinition("extractText", "extractText", List.of(), 0, 0, null, null),
+				new StepDefinition("extractText", "extractTextAgain", List.of(), 0, 0, null, null)
 			)
 		);
 

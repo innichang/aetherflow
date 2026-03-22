@@ -15,6 +15,8 @@ public @interface Step {
 
 	int retries() default 0;
 
+	String backoff() default "";
+
 	int timeoutSeconds() default 0;
 
 	int concurrency() default 0;

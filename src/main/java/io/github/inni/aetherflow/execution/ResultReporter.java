@@ -2,6 +2,7 @@ package io.github.inni.aetherflow.execution;
 
 import io.github.inni.aetherflow.engine.ExecutionStatus;
 import io.github.inni.aetherflow.persistence.entity.StepEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.TaskQueueEntity;
 import io.github.inni.aetherflow.persistence.entity.WorkflowRunEntity;
@@ -15,8 +16,8 @@ import io.github.inni.aetherflow.workflow.registry.RegisteredWorkflow;
 import io.github.inni.aetherflow.workflow.registry.WorkflowRegistry;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,11 +63,76 @@ public class ResultReporter {
 			return;
 		}
 
+		int retryCount = stepRun.getRetryCount();
+		int maxRetries = stepRun.getMaxRetries();
+
+		if (retryCount < maxRetries) {
+			scheduleRetry(stepRun, task, result, workflowRun.getWorkflowName());
+			return;
+		}
+
 		markStepAndTaskFailed(stepRun, task, result);
 		workflowRun.setStatus(ExecutionStatus.FAILED);
 		workflowRun.setErrorMessage(result.error().getMessage());
 		workflowRun.setCompletedAt(OffsetDateTime.now());
 		workflowRunRepository.save(workflowRun);
+	}
+
+	private void scheduleRetry(StepRunEntity stepRun, TaskQueueEntity task, ExecutionResult result, String workflowName) {
+		int retryCount = stepRun.getRetryCount();
+		int backoffSeconds = resolveBackoffSeconds(stepRun, workflowName);
+		// exponential backoff: delay = backoffSeconds * 2^retryCount (minimum 0)
+		long delaySeconds = (long) backoffSeconds * (1L << retryCount);
+		OffsetDateTime nextRetryTime = OffsetDateTime.now().plusSeconds(delaySeconds);
+
+		stepRun.setStatus(ExecutionStatus.RETRYING);
+		stepRun.setRetryCount(retryCount + 1);
+		stepRun.setNextRetryTime(nextRetryTime);
+		stepRun.setDurationMs(result.durationMs());
+		stepRun.setErrorType(result.error().getClass().getName());
+		stepRun.setErrorMessage(result.error().getMessage());
+		stepRun.setCompletedAt(OffsetDateTime.now());
+		stepRunRepository.save(stepRun);
+
+		task.setStatus(ExecutionStatus.FAILED);
+		task.setLockedAt(OffsetDateTime.now());
+		taskQueueRepository.save(task);
+
+		StepRunEntity retryStepRun = new StepRunEntity();
+		retryStepRun.setId(UUID.randomUUID());
+		retryStepRun.setWorkflowRunId(stepRun.getWorkflowRunId());
+		retryStepRun.setWorkflowId(stepRun.getWorkflowId());
+		retryStepRun.setStepId(stepRun.getStepId());
+		retryStepRun.setStepName(stepRun.getStepName());
+		retryStepRun.setStatus(ExecutionStatus.PENDING);
+		retryStepRun.setAttempt(stepRun.getAttempt() + 1);
+		retryStepRun.setMaxRetries(stepRun.getMaxRetries());
+		retryStepRun.setRetryCount(retryCount + 1);
+		retryStepRun.setIdempotencyKey(stepRun.getWorkflowRunId() + ":" + stepRun.getStepName() + ":" + (stepRun.getAttempt() + 1));
+		try {
+			stepRunRepository.save(retryStepRun);
+		} catch (DataIntegrityViolationException e) {
+			// retry step run already exists — skip re-enqueue
+			return;
+		}
+
+		TaskQueueEntity retryTask = new TaskQueueEntity();
+		retryTask.setId(UUID.randomUUID());
+		retryTask.setWorkflowRunId(stepRun.getWorkflowRunId());
+		retryTask.setStepRunId(retryStepRun.getId());
+		retryTask.setWorkflowName(task.getWorkflowName());
+		retryTask.setStepName(stepRun.getStepName());
+		retryTask.setStatus(ExecutionStatus.PENDING);
+		retryTask.setPriority(task.getPriority());
+		retryTask.setAvailableAt(nextRetryTime);
+		taskQueueRepository.save(retryTask);
+	}
+
+	private int resolveBackoffSeconds(StepRunEntity stepRun, String workflowName) {
+		UUID workflowId = workflowRepository.findByWorkflowName(workflowName).orElseThrow().getId();
+		return stepRepository.findByWorkflowIdAndStepName(workflowId, stepRun.getStepName())
+			.map(StepEntity::getBackoffSeconds)
+			.orElse(0);
 	}
 
 	private void markStepAndTaskCompleted(StepRunEntity stepRun, TaskQueueEntity task, long durationMs) {
@@ -107,23 +173,21 @@ public class ResultReporter {
 		}
 
 		for (String dependentName : registeredWorkflow.dependencyGraph().dependentsOf(completedStepName)) {
-			Optional<StepRunEntity> existingRun = stepRunRepository.findByWorkflowRunIdAndStepNameAndAttempt(
+			List<StepRunEntity> existingRuns = stepRunRepository.findByWorkflowRunIdAndStepName(
 				workflowRun.getId(),
-				dependentName,
-				1
+				dependentName
 			);
-			if (existingRun.isPresent()) {
+			if (!existingRuns.isEmpty()) {
 				continue;
 			}
 
 			boolean dependenciesReady = registeredWorkflow.dependencyGraph()
 				.dependenciesOf(dependentName)
 				.stream()
-				.allMatch(
-					dependency -> stepRunRepository
-						.findByWorkflowRunIdAndStepNameAndAttempt(workflowRun.getId(), dependency, 1)
-						.map(stepRun -> ExecutionStatus.COMPLETED.equals(stepRun.getStatus()))
-						.orElse(false)
+				.allMatch(dependency -> stepRunRepository
+					.findByWorkflowRunIdAndStepName(workflowRun.getId(), dependency)
+					.stream()
+					.anyMatch(run -> ExecutionStatus.COMPLETED.equals(run.getStatus()))
 				);
 			if (!dependenciesReady) {
 				continue;
@@ -140,7 +204,13 @@ public class ResultReporter {
 			stepRun.setAttempt(1);
 			stepRun.setMaxRetries(dependentStep.getRetries());
 			stepRun.setRetryCount(0);
-			stepRunRepository.save(stepRun);
+			stepRun.setIdempotencyKey(workflowRun.getId() + ":" + dependentName + ":1");
+			try {
+				stepRunRepository.save(stepRun);
+			} catch (DataIntegrityViolationException e) {
+				// duplicate enqueue — another worker already created this step run; skip
+				continue;
+			}
 
 			TaskQueueEntity task = new TaskQueueEntity();
 			task.setId(UUID.randomUUID());
@@ -160,11 +230,10 @@ public class ResultReporter {
 		boolean allCompleted = registeredWorkflow.dependencyGraph()
 			.topologicalOrder()
 			.stream()
-			.allMatch(
-				step -> stepRunRepository
-					.findByWorkflowRunIdAndStepNameAndAttempt(workflowRun.getId(), step, 1)
-					.map(stepRun -> ExecutionStatus.COMPLETED.equals(stepRun.getStatus()))
-					.orElse(false)
+			.allMatch(step -> stepRunRepository
+				.findByWorkflowRunIdAndStepName(workflowRun.getId(), step)
+				.stream()
+				.anyMatch(run -> ExecutionStatus.COMPLETED.equals(run.getStatus()))
 			);
 		if (!allCompleted) {
 			return;
@@ -174,4 +243,3 @@ public class ResultReporter {
 		workflowRunRepository.save(workflowRun);
 	}
 }
-

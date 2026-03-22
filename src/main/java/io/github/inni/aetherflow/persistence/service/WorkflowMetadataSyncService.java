@@ -54,6 +54,7 @@ public class WorkflowMetadataSyncService {
 			stepEntity.setStepOrderHint(order++);
 			stepEntity.setDependsOn(String.join(",", definition.dependsOn()));
 			stepEntity.setRetries(definition.retries());
+			stepEntity.setBackoffSeconds(definition.backoffSeconds());
 			stepEntity.setTimeoutSeconds(definition.timeoutSeconds());
 			stepEntity.setConcurrencyLimit(definition.concurrencyLimit());
 			stepRepository.save(stepEntity);

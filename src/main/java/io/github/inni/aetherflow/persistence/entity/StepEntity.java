@@ -31,6 +31,9 @@ public class StepEntity extends AuditableEntity {
 	@Column(name = "retries", nullable = false)
 	private int retries;
 
+	@Column(name = "backoff_seconds", nullable = false)
+	private int backoffSeconds;
+
 	@Column(name = "timeout_seconds")
 	private Integer timeoutSeconds;
 
@@ -91,6 +94,14 @@ public class StepEntity extends AuditableEntity {
 
 	public void setRetries(int retries) {
 		this.retries = retries;
+	}
+
+	public int getBackoffSeconds() {
+		return backoffSeconds;
+	}
+
+	public void setBackoffSeconds(int backoffSeconds) {
+		this.backoffSeconds = backoffSeconds;
 	}
 
 	public Integer getTimeoutSeconds() {

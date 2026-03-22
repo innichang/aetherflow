@@ -1,5 +1,6 @@
 package io.github.inni.aetherflow.workflow.registry;
 
+import io.github.inni.aetherflow.execution.BackoffParser;
 import io.github.inni.aetherflow.workflow.annotation.AIWorkflow;
 import io.github.inni.aetherflow.workflow.annotation.Step;
 import io.github.inni.aetherflow.workflow.model.StepDefinition;
@@ -46,6 +47,7 @@ public class WorkflowScanner {
 					method.getName(),
 					Arrays.stream(step.dependsOn()).toList(),
 					step.retries(),
+					BackoffParser.parseSeconds(step.backoff()),
 					step.timeoutSeconds() > 0 ? step.timeoutSeconds() : null,
 					step.concurrency() > 0 ? step.concurrency() : null
 				);

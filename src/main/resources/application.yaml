@@ -23,3 +23,7 @@ spring:
 aetherflow:
   worker:
     poll-interval-ms: 250
+    recovery-interval-ms: 10000
+    heartbeat-interval-ms: 5000
+    liveness-timeout-ms: 30000
+    liveness-check-interval-ms: 15000
