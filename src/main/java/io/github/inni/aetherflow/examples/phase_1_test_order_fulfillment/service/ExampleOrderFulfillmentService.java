@@ -1,4 +1,4 @@
-package io.github.inni.aetherflow.examples.order_fulfillment.service;
+package io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.service;
 
 import io.github.inni.aetherflow.engine.WorkflowEngine;
 import io.github.inni.aetherflow.persistence.entity.WorkflowRunEntity;

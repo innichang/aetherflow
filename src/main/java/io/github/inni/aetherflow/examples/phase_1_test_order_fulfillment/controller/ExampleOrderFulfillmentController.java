@@ -1,4 +1,4 @@
-package io.github.inni.aetherflow.examples.order_fulfillment.controller;
+package io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.controller;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -10,10 +10,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import io.github.inni.aetherflow.examples.order_fulfillment.service.ExampleOrderFulfillmentService;
-import io.github.inni.aetherflow.examples.order_fulfillment.service.ExampleOrderFulfillmentService.ExampleWorkflowRunResponse;
-import io.github.inni.aetherflow.examples.order_fulfillment.service.ExampleOrderFulfillmentService.StartExampleWorkflowRequest;
-import io.github.inni.aetherflow.examples.order_fulfillment.service.ExampleOrderFulfillmentService.StartExampleWorkflowResponse;
+import io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.service.ExampleOrderFulfillmentService;
+import io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.service.ExampleOrderFulfillmentService.ExampleWorkflowRunResponse;
+import io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.service.ExampleOrderFulfillmentService.StartExampleWorkflowRequest;
+import io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.service.ExampleOrderFulfillmentService.StartExampleWorkflowResponse;
 
 @RestController
 @RequestMapping("/example/workflows")

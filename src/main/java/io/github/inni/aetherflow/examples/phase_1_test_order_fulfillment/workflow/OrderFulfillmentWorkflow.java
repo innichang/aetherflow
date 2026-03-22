@@ -1,4 +1,4 @@
-package io.github.inni.aetherflow.examples.order_fulfillment.workflow;
+package io.github.inni.aetherflow.examples.phase_1_test_order_fulfillment.workflow;
 
 import io.github.inni.aetherflow.workflow.annotation.AIWorkflow;
 import io.github.inni.aetherflow.workflow.annotation.Step;
