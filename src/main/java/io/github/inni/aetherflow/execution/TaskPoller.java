@@ -1,5 +1,6 @@
 package io.github.inni.aetherflow.execution;
 
+import io.github.inni.aetherflow.config.AetherflowProperties;
 import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.TaskQueueEntity;
 import io.github.inni.aetherflow.persistence.entity.WorkerEntity;
@@ -14,7 +15,6 @@ import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +28,7 @@ public class TaskPoller {
 	private final StepRunRepository stepRunRepository;
 	private final WorkerRepository workerRepository;
 	private final WorkerHeartbeatRepository workerHeartbeatRepository;
+	private final AetherflowProperties props;
 	private final String workerId;
 
 	public TaskPoller(
@@ -36,7 +37,8 @@ public class TaskPoller {
 		ResultReporter resultReporter,
 		StepRunRepository stepRunRepository,
 		WorkerRepository workerRepository,
-		WorkerHeartbeatRepository workerHeartbeatRepository
+		WorkerHeartbeatRepository workerHeartbeatRepository,
+		AetherflowProperties props
 	) {
 		this.taskQueueClaimService = taskQueueClaimService;
 		this.taskExecutor = taskExecutor;
@@ -44,6 +46,7 @@ public class TaskPoller {
 		this.stepRunRepository = stepRunRepository;
 		this.workerRepository = workerRepository;
 		this.workerHeartbeatRepository = workerHeartbeatRepository;
+		this.props = props;
 		this.workerId = "worker-" + UUID.randomUUID();
 	}
 
@@ -67,8 +70,7 @@ public class TaskPoller {
 
 	@Scheduled(fixedDelayString = "${aetherflow.worker.poll-interval-ms:250}")
 	public void poll() {
-		int lockSeconds = ThreadLocalRandom.current().nextInt(20, 31);
-		Optional<TaskQueueEntity> task = taskQueueClaimService.claimNextTask(workerId, lockSeconds);
+		Optional<TaskQueueEntity> task = taskQueueClaimService.claimNextTask(workerId, props.queue().lockTimeoutSeconds());
 		task.ifPresent(this::executeTask);
 	}
 

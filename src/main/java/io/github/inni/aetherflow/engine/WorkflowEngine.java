@@ -47,11 +47,16 @@ public class WorkflowEngine {
 
 	@Transactional
 	public UUID start(String workflowName) {
-		return start(workflowName, null);
+		return start(workflowName, null, null);
 	}
 
 	@Transactional
 	public UUID start(String workflowName, String inputPayload) {
+		return start(workflowName, inputPayload, null);
+	}
+
+	@Transactional
+	public UUID start(String workflowName, String inputPayload, String triggerKey) {
 		RegisteredWorkflow registeredWorkflow = workflowRegistry.getRequired(workflowName);
 		WorkflowEntity workflowEntity = metadataSyncService.sync(registeredWorkflow);
 		Map<String, StepEntity> stepEntityMap = new HashMap<>();
@@ -66,6 +71,7 @@ public class WorkflowEngine {
 		workflowRun.setWorkflowVersion(workflowEntity.getWorkflowVersion());
 		workflowRun.setStatus(ExecutionStatus.RUNNING);
 		workflowRun.setInputPayload(inputPayload);
+		workflowRun.setTriggerKey(triggerKey);
 		workflowRun.setStartedAt(OffsetDateTime.now());
 		workflowRunRepository.save(workflowRun);
 

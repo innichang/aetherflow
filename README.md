@@ -1,142 +1,277 @@
 # AetherFlow
 
-Spring-native AI workflow engine for DAG-based orchestration.
+Spring-native workflow engine for DAG-based orchestration of long-running tasks.
 
-AetherFlow is an infrastructure project for teams building AI pipelines in Java and Spring Boot. It focuses on reliable workflow execution for long-running, dependency-driven tasks such as document processing, RAG ingestion, and model inference pipelines.
+AetherFlow is built for teams running AI pipelines in Java and Spring Boot — document processing, RAG ingestion, model inference — where reliable, retryable, dependency-ordered execution matters.
 
 ## Why AetherFlow
 
-Current tools are often not a strong fit for Spring-based AI workloads:
+- Standard schedulers handle time-based jobs, not DAG workflows.
+- Background job frameworks lack step dependency tracking and AI-focused reliability features.
+- Python-first workflow tools add cross-stack complexity.
 
-- Schedulers handle time-based jobs, not workflow orchestration.
-- Background job frameworks lack DAG execution and AI-focused observability.
-- Python-first workflow tools add cross-stack operational complexity.
+AetherFlow provides:
 
-AetherFlow aims to provide:
+- DAG execution with `@AIWorkflow` + `@Step` annotations
+- PostgreSQL-backed task queue with `FOR UPDATE SKIP LOCKED` distributed locking
+- Retries with exponential backoff, step timeouts, and dead worker recovery
+- REST API to start and inspect workflow runs
+- Cron and Kafka triggers out of the box
+- Spring Boot auto-configuration
 
-- DAG execution inside Spring applications
-- Worker-based task runtime
-- Durable execution state
-- Retry and recovery for long-running AI steps
-- Metrics for both system and AI workload behavior
+---
 
-## Core Concepts
+## Quickstart
 
-- **Workflow**: A full pipeline (for example, `document-processing`)
-- **Step**: A single unit of work with dependencies
-- **Task**: A schedulable execution of a step
-- **Worker**: Runtime process that polls, executes, and reports step progress
-- **Execution Store**: Persistent workflow and step state
+### Prerequisites
 
-## High-Level Architecture
+- Java 17+
+- PostgreSQL database
+- Docker (for integration tests)
 
-1. Spring application defines workflow
-2. Engine builds and executes DAG
-3. Ready steps are pushed to task queue
-4. Workers execute tasks and persist outputs
-5. Engine advances workflow state until completion
+### 1. Configure your database
 
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/aetherflow
+    username: postgres
+    password: postgres
 
-## Example Workflow
+aetherflow:
+  worker:
+    poll-interval-ms: 250
+```
 
-Document processing pipeline:
+Flyway migrations run automatically on startup and create all required tables.
 
-`upload -> extract -> chunk -> embed -> summarize -> store`
+### 2. Define a workflow
 
-Parallel branches are supported when dependencies allow it.
-
-## Usage Example
-
-Define a workflow with annotations:
+Annotate a Spring `@Component` with `@AIWorkflow`. Each method annotated with `@Step` is one node in the DAG.
 
 ```java
-import io.github.inni.aetherflow.workflow.annotation.AIWorkflow;
-import io.github.inni.aetherflow.workflow.annotation.Step;
-import org.springframework.stereotype.Component;
-
 @Component
 @AIWorkflow("document-pipeline")
-public class DocumentWorkflow {
+public class DocumentPipelineWorkflow {
 
     @Step
-    public void extractText() {}
+    public void extractText() {
+        // step logic here
+    }
 
-    @Step(dependsOn = {"extractText"})
+    @Step(dependsOn = "extractText", retries = 3, backoff = "5s")
     public void chunkText() {}
 
-    @Step(dependsOn = {"chunkText"})
-    public void embedChunks() {}
+    @Step(dependsOn = "extractText", retries = 3, backoff = "5s")
+    public void generateEmbeddings() {}
+
+    @Step(dependsOn = {"chunkText", "generateEmbeddings"}, timeoutSeconds = 60)
+    public void storeResults() {}
 }
 ```
 
-Start the workflow from application code:
+The engine validates the DAG at startup — cycles, missing dependencies, and duplicate step names all fail fast.
 
-```java
-import io.github.inni.aetherflow.engine.WorkflowEngine;
-import java.util.UUID;
-import org.springframework.stereotype.Service;
+### 3. Start a workflow via the REST API
 
-@Service
-public class WorkflowLauncher {
+```http
+POST /workflows/start
+Content-Type: application/json
 
-    private final WorkflowEngine workflowEngine;
-
-    public WorkflowLauncher(WorkflowEngine workflowEngine) {
-        this.workflowEngine = workflowEngine;
-    }
-
-    public UUID runDocumentPipeline() {
-        return workflowEngine.start("document-pipeline");
-    }
+{
+  "workflowName": "document-pipeline",
+  "input": { "documentId": "doc-123" }
 }
 ```
 
-What happens next:
+Response:
 
-1. AetherFlow scans `@AIWorkflow` + `@Step` definitions at startup.
-2. The engine validates the DAG and registers the workflow.
-3. `start(...)` creates a workflow run and enqueues root steps.
-4. Workers claim tasks using PostgreSQL row locking (`FOR UPDATE SKIP LOCKED`).
-5. Completed steps unlock dependent steps until the workflow is complete.
-
-## Tech Stack
-
-- Java 21
-- Spring Boot
-- PostgreSQL (execution store + initial queue)
-- Micrometer + Prometheus (metrics)
-- Grafana (dashboards)
-
-Planned queue evolution:
-
-- Phase 1: PostgreSQL queue
-- Phase 2: Redis / Kafka
-
-## Project Modules (Target Layout)
-
-```text
-ai-workflow-engine
-├─ engine
-├─ scheduler
-├─ worker-runtime
-├─ spring-integration
-├─ dashboard
-└─ examples
+```json
+{
+  "runId": "a3f1c2d4-...",
+  "workflowName": "document-pipeline",
+  "startedAt": "2026-03-22T10:00:00Z"
+}
 ```
 
-## Design Direction
+### 4. Observe run progress
 
-Primary execution model:
+```http
+GET /workflow-runs/a3f1c2d4-...
+```
 
-- **State machine + queue hybrid**
+```json
+{
+  "runId": "a3f1c2d4-...",
+  "workflowName": "document-pipeline",
+  "status": "completed",
+  "startedAt": "2026-03-22T10:00:00Z",
+  "completedAt": "2026-03-22T10:00:04Z",
+  "steps": [
+    { "stepName": "extractText",        "status": "completed", "durationMs": 812 },
+    { "stepName": "chunkText",          "status": "completed", "durationMs": 1340 },
+    { "stepName": "generateEmbeddings", "status": "completed", "durationMs": 2100 },
+    { "stepName": "storeResults",       "status": "completed", "durationMs": 430 }
+  ]
+}
+```
 
-This combines queue scalability with explicit workflow state control for reliability and recovery.
+### 5. List runs
+
+```http
+GET /workflow-runs?workflowName=document-pipeline&status=completed&page=0&size=20
+```
+
+---
+
+## Step Annotation Reference
+
+| Attribute        | Type     | Default | Description                                           |
+|------------------|----------|---------|-------------------------------------------------------|
+| `name`           | String   | method name | Override the step name                           |
+| `dependsOn`      | String[] | `{}`    | Names of steps that must complete before this one     |
+| `retries`        | int      | `0`     | Maximum retry attempts on failure                     |
+| `backoff`        | String   | `""`    | Exponential backoff base, e.g. `"5s"`, `"2m"`        |
+| `timeoutSeconds` | int      | `0`     | Step execution timeout (0 = no timeout)               |
+| `concurrency`    | int      | `0`     | Max parallel executions of this step (0 = unlimited)  |
+
+---
+
+## Triggers
+
+### Cron
+
+Start workflows on a schedule:
+
+```yaml
+aetherflow:
+  triggers:
+    cron:
+      - workflow: document-pipeline
+        schedule: "0 0 * * * *"   # top of every hour
+        input: '{"source":"scheduled"}'
+```
+
+Spring cron format: `second minute hour day month weekday`.
+
+### Kafka
+
+Start workflows from Kafka messages:
+
+```yaml
+aetherflow:
+  triggers:
+    kafka:
+      - topic: documents.uploaded
+        workflow: document-pipeline
+        deduplication-key-field: documentId
+```
+
+When `deduplication-key-field` is set, duplicate messages with the same field value are silently skipped.
+
+---
+
+## Configuration Reference
+
+```yaml
+aetherflow:
+  worker:
+    poll-interval-ms: 250          # how often each worker polls for tasks
+    heartbeat-interval-ms: 5000    # how often workers emit heartbeats
+    liveness-timeout-ms: 30000     # time before a silent worker is marked dead
+    liveness-check-interval-ms: 15000
+    recovery-interval-ms: 10000    # how often expired task locks are reclaimed
+
+  retry:
+    default-retries: 0             # fallback if @Step.retries not set
+    default-backoff-seconds: 5
+
+  queue:
+    batch-size: 1
+    lock-timeout-seconds: 25       # how long a claimed task is locked
+
+  api:
+    enabled: true                  # set false to disable REST endpoints
+```
+
+---
+
+## Build & Test
+
+```bash
+./gradlew build          # compile and run all tests
+./gradlew test           # run tests only
+./gradlew clean build    # clean then build
+```
+
+Integration tests require Docker (Testcontainers PostgreSQL + Kafka). They are skipped automatically when Docker is unavailable.
+
+---
+
+## Architecture
+
+### Workflow Definition
+
+Workflows are plain Spring `@Component` beans annotated with `@AIWorkflow("name")`. Steps are methods annotated with `@Step`.
+
+### Startup Lifecycle
+
+1. `WorkflowScanner` discovers all `@AIWorkflow` beans at startup.
+2. `DependencyGraphBuilder` validates the DAG (Kahn's topological sort — detects cycles, missing references, duplicates).
+3. `WorkflowRegistry` stores validated workflows in memory.
+4. `WorkflowMetadataInitializer` syncs workflow and step metadata to the database.
+
+### Execution Flow
+
+`WorkflowEngine.start(name)` creates a `WorkflowRunEntity` and enqueues root steps (no dependencies) into `task_queue`.
+
+`TaskPoller` (default every 250ms) claims tasks via `FOR UPDATE SKIP LOCKED` — PostgreSQL row-level locking is the distributed coordination mechanism; no separate lock service required.
+
+After each step executes, `ResultReporter` either:
+- **On success**: checks which dependent steps are now fully unblocked and enqueues them.
+- **On failure**: retries with exponential backoff if retries remain; otherwise marks the step and workflow run as `failed`.
+
+`TimeoutRecoveryScheduler` runs two sweeps periodically:
+- Reclaims tasks whose lock has expired (worker crashed mid-execution).
+- Marks workers that have stopped sending heartbeats as dead and re-routes their in-flight tasks.
+
+### Key Packages
+
+| Package | Responsibility |
+|---|---|
+| `engine/` | `WorkflowEngine`, `ExecutionStatus` |
+| `workflow/annotation/` | `@AIWorkflow`, `@Step` |
+| `workflow/graph/` | DAG building and validation |
+| `workflow/registry/` | Discovery, in-memory registry, reflection invokers |
+| `execution/` | Worker polling, task claiming, step execution, result/dependency fanout |
+| `persistence/` | JPA entities, repositories, Flyway migrations |
+| `api/` | REST endpoints and query service |
+| `config/` | `AetherflowAutoConfiguration`, properties, cron/Kafka trigger wiring |
+| `examples/` | `order-fulfillment` demo workflow |
+
+### Database Tables
+
+| Table | Purpose |
+|---|---|
+| `workflows` | Static workflow metadata |
+| `steps` | Static step metadata (retries, timeout, backoff, concurrency) |
+| `workflow_runs` | One row per run; holds status, input/output payload, trigger key |
+| `step_runs` | One row per step execution attempt |
+| `task_queue` | Live worker queue, polled with `FOR UPDATE SKIP LOCKED` |
+| `workers` | Registered worker instances with heartbeat timestamps |
+| `worker_heartbeats` | Heartbeat log for liveness tracking |
+
+---
 
 ## Status
 
-Early-stage design and implementation planning.
+Phase 1 (core engine) and Phase 2 (reliability — retries, timeouts, heartbeats) are complete.
+Phase 3 (Spring ecosystem integration — REST API, cron/Kafka triggers, auto-configuration) is complete.
 
-If you are interested in contributing, start by reviewing the MVP scope and core engine architecture.
+Planned next:
+- Phase 4: Observability — step latency metrics, queue depth, retry rate dashboards
+- Phase 5: Multi-module packaging — `aetherflow-core` + `aetherflow-spring-boot-starter` JARs
+- Phase 6: Management UI
 
 ## License
 

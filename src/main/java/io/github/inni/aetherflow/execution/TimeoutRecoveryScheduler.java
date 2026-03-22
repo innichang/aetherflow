@@ -1,5 +1,6 @@
 package io.github.inni.aetherflow.execution;
 
+import io.github.inni.aetherflow.config.AetherflowProperties;
 import io.github.inni.aetherflow.persistence.entity.StepRunEntity;
 import io.github.inni.aetherflow.persistence.entity.TaskQueueEntity;
 import io.github.inni.aetherflow.persistence.entity.WorkerEntity;
@@ -12,7 +13,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -27,22 +27,22 @@ public class TimeoutRecoveryScheduler {
 	private final StepRunRepository stepRunRepository;
 	private final ResultReporter resultReporter;
 	private final WorkerRepository workerRepository;
-
-	@Value("${aetherflow.worker.liveness-timeout-ms:30000}")
-	private long livenessTimeoutMs;
+	private final AetherflowProperties props;
 
 	public TimeoutRecoveryScheduler(
 		NamedParameterJdbcTemplate jdbcTemplate,
 		TaskQueueRepository taskQueueRepository,
 		StepRunRepository stepRunRepository,
 		ResultReporter resultReporter,
-		WorkerRepository workerRepository
+		WorkerRepository workerRepository,
+		AetherflowProperties props
 	) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.taskQueueRepository = taskQueueRepository;
 		this.stepRunRepository = stepRunRepository;
 		this.resultReporter = resultReporter;
 		this.workerRepository = workerRepository;
+		this.props = props;
 	}
 
 	@Scheduled(fixedDelayString = "${aetherflow.worker.recovery-interval-ms:10000}")
@@ -69,7 +69,7 @@ public class TimeoutRecoveryScheduler {
 
 	@Scheduled(fixedDelayString = "${aetherflow.worker.liveness-check-interval-ms:15000}")
 	public void recoverDeadWorkers() {
-		OffsetDateTime threshold = OffsetDateTime.now().minusNanos(livenessTimeoutMs * 1_000_000L);
+		OffsetDateTime threshold = OffsetDateTime.now().minusNanos(props.worker().livenessTimeoutMs() * 1_000_000L);
 		List<WorkerEntity> deadWorkers = workerRepository.findByStatusAndLastHeartbeatBefore("active", threshold);
 
 		for (WorkerEntity worker : deadWorkers) {

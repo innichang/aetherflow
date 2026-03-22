@@ -39,6 +39,9 @@ public class WorkflowRunEntity extends AuditableEntity {
 	@Column(name = "error_message")
 	private String errorMessage;
 
+	@Column(name = "trigger_key", unique = true)
+	private String triggerKey;
+
 	@Column(name = "started_at", nullable = false)
 	private OffsetDateTime startedAt;
 
@@ -107,6 +110,14 @@ public class WorkflowRunEntity extends AuditableEntity {
 
 	public void setErrorMessage(String errorMessage) {
 		this.errorMessage = errorMessage;
+	}
+
+	public String getTriggerKey() {
+		return triggerKey;
+	}
+
+	public void setTriggerKey(String triggerKey) {
+		this.triggerKey = triggerKey;
 	}
 
 	public OffsetDateTime getStartedAt() {

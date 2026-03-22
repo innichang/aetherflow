@@ -27,3 +27,20 @@ aetherflow:
     heartbeat-interval-ms: 5000
     liveness-timeout-ms: 30000
     liveness-check-interval-ms: 15000
+  retry:
+    default-retries: 0
+    default-backoff-seconds: 5
+  queue:
+    batch-size: 1
+    lock-timeout-seconds: 25
+  api:
+    enabled: true
+# triggers:
+#   cron:
+#     - workflow: order-fulfillment-workflow
+#       schedule: "0 * * * * *"   # every minute
+#       input: '{"source":"scheduled"}'
+#   kafka:
+#     - topic: orders.created
+#       workflow: order-fulfillment-workflow
+#       deduplication-key-field: orderId
